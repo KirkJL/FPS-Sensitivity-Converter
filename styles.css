@@ -550,71 +550,111 @@ body {
   letter-spacing: 0.08em;
 }
 
-/* ── Buy Me a Coffee button ─────────────────────────────────── */
+/* ── Support / Buy Me a Coffee button ───────────────────────── */
+/* Styled to match the site's terminal aesthetic — no external branding */
 .bmc-btn {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  background: #1c1c1c;
-  border: 1px solid #2e2e2e;
-  border-radius: 40px;
-  padding: 10px 20px 10px 16px;
+  gap: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-lit);
+  border-radius: var(--radius);
+  padding: 14px 20px;
   text-decoration: none;
   color: var(--text-primary);
-  transition: background var(--transition), border-color var(--transition),
-              box-shadow var(--transition), transform 0.2s cubic-bezier(0.34,1.56,0.64,1);
-  cursor: pointer;
   position: relative;
   overflow: hidden;
+  transition:
+    border-color var(--transition),
+    box-shadow var(--transition),
+    background var(--transition),
+    transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
+
+/* Green scanline sweep on hover — matches card glow feel */
 .bmc-btn::before {
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 50% 0%, rgba(255,221,0,0.08), transparent 70%);
-  opacity: 0;
-  transition: opacity var(--transition);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--green-glow2) 50%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  transition: transform 0.5s ease;
 }
+
 .bmc-btn:hover {
-  background: #232323;
-  border-color: rgba(255,221,0,0.35);
-  box-shadow: 0 0 20px rgba(255,221,0,0.1), 0 4px 16px rgba(0,0,0,0.4);
+  border-color: var(--green-dim);
+  background: var(--surface-2);
+  box-shadow: 0 0 0 1px var(--green-glow2) inset, 0 0 24px var(--green-glow2);
   transform: translateY(-2px);
 }
-.bmc-btn:hover::before { opacity: 1; }
+.bmc-btn:hover::before { transform: translateX(100%); }
+
 .bmc-btn:focus-visible {
-  outline: 2px solid var(--bmc-orange);
-  outline-offset: 3px;
+  outline: none;
+  border-color: var(--green);
+  box-shadow: 0 0 0 2px var(--green-glow);
 }
+
+/* Left accent bar — like the section-label pip */
+.bmc-btn::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--green-dim);
+  transition: background var(--transition);
+}
+.bmc-btn:hover::after { background: var(--green); }
+
+/* Icon — monospace terminal feel, no color */
 .bmc-icon {
-  font-size: 1.4rem;
+  font-size: 1.3rem;
   line-height: 1;
   flex-shrink: 0;
-  filter: grayscale(0.2);
-  transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  filter: grayscale(1) brightness(1.5);
+  transition: filter var(--transition), transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.bmc-btn:hover .bmc-icon { transform: rotate(-12deg) scale(1.15); }
+.bmc-btn:hover .bmc-icon {
+  filter: grayscale(0) brightness(1);
+  transform: scale(1.15);
+}
+
 .bmc-text-wrap {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   line-height: 1;
+  padding-left: 2px; /* optical compensation for the left border */
 }
+
 .bmc-text {
   font-family: var(--font-ui);
   font-weight: 700;
-  font-size: 1rem;
-  letter-spacing: 0.02em;
-  color: #fff;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  transition: color var(--transition);
 }
+.bmc-btn:hover .bmc-text { color: var(--green); }
+
 .bmc-sub {
   font-family: var(--font-mono);
   font-size: 0.6rem;
-  letter-spacing: 0.1em;
-  color: var(--text-sec);
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
   text-transform: uppercase;
-  margin-top: 3px;
+  margin-top: 4px;
+  transition: color var(--transition);
 }
+.bmc-btn:hover .bmc-sub { color: var(--text-sec); }
 
 /* ── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 480px) {
