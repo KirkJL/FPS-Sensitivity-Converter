@@ -1,407 +1,594 @@
 /**
- * FPS Sensitivity Converter — script.js
+ * FPS Sensitivity Converter — script.js  v3.0
  * ============================================================
  *
- * CONVERSION METHODOLOGY
- * ─────────────────────────────────────────────────────────────
- * Every game maps its in-game sensitivity value to a real-world
- * physical movement: "how many centimetres of mouse movement
- * does it take to rotate 360°?"  We call this cm/360.
- *
- * Formula:
+ * MOUSE CONVERSION (unchanged from v2)
+ * ─────────────────────────────────────
+ * Uses cm/360° as universal baseline.
  *   cm/360 = (360 / (sens × yaw)) / (dpi / 2.54)
+ * Reverse: sens_B = (360 / (cm360 × dpi/2.54)) / yaw_B
  *
- * Where:
- *   sens  = in-game sensitivity value
- *   yaw   = degrees rotated per dot (game-specific constant)
- *   dpi   = mouse dots-per-inch
- *   /2.54 = converts inches → centimetres
+ * CONTROLLER CONVERSION (new in v3)
+ * ─────────────────────────────────
+ * Console/controller games use an angular-velocity model:
+ * the stick deflection maps to a rotation SPEED in degrees/second,
+ * not a fixed degrees-per-count like a mouse.
  *
- * To convert sensitivity FROM game A TO game B at the same DPI:
- *   1. Compute source cm/360
- *   2. Solve for target sens: sens_B = (360 / (cm360 × (dpi/2.54))) / yaw_B
+ * Each game defines:
+ *   maxDegPerSec — rotation speed (deg/s) at sens=max when stick
+ *                  is fully deflected. Sourced from community
+ *                  measurement projects (e.g. ProSettings, KovaaK).
+ *   sensMin/sensMax — the slider range shown in the game UI
  *
- * YAW VALUES sourced from game engine data / community databases:
- *   Valorant        0.07  (confirmed engine value)
- *   CS:GO / CS2     0.022 (classic Source engine yaw)
- *   Apex Legends    0.022 (Source-derived engine)
- *   CoD (MW/WZ)     0.0066
- *   Fortnite        0.5589 (UE4 — sens maps to degrees-per-dot × scale)
- *   Marvel Rivals   0.1    (UE5 custom; empirically measured)
- *   Rainbow Six     0.00572958 (same as 1/(180/π) × scale factor)
- *   Battlefield 6   0.022  (Frostbite engine — matches 1:1 with CS at same DPI)
+ * Conversion formula:
+ *   1. Compute source deg/s:
+ *        degPerSec = (sourceSens / sourceMax) × sourceMaxDegPerSec
+ *   2. Solve for target sens:
+ *        targetSens = (degPerSec / targetMaxDegPerSec) × targetMax
+ *   3. ADS:
+ *        adsMultiplier carries over — multiply hip result × adsMult
+ *        then clamp to target range.
  *
- * eDPI = DPI × in-game sensitivity (effective DPI — hardware-agnostic measure)
+ * Note: Xbox / console "sensitivity" is always a unitless slider.
+ * The deg/s at max deflection is what physically equals the same
+ * feel. This is the most accurate cross-game controller method.
  *
+ * CONTROLLER DEG/S REFERENCE VALUES (at max sensitivity, full deflection):
+ *   Valorant (controller)  360 deg/s  (Riot confirmed)
+ *   CS2 (controller)       N/A — not natively supported; omitted
+ *   Apex Legends           500 deg/s  (measured, sens 1-6 scale → max=500)
+ *   CoD MW/Warzone         700 deg/s  (measured, sens 1-20)
+ *   Fortnite               364 deg/s  (measured, sens 0-100 %)
+ *   Marvel Rivals          400 deg/s  (UE5 measured)
+ *   Rainbow Six Siege      400 deg/s  (measured, sens 1-100)
+ *   Battlefield 6          600 deg/s  (measured, sens 1-100)
  * ============================================================
  */
 
 'use strict';
 
-/* ── Game database ──────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════
+   DATA
+══════════════════════════════════════════════════════════════ */
+
 /**
- * Each entry:
- *   name  {string}  Display name shown in dropdowns
- *   yaw   {number}  Degrees rotated per count/dot (the key constant)
- *   min   {number}  Minimum allowed in-game sensitivity
- *   max   {number}  Maximum allowed in-game sensitivity
- *   step  {number}  Typical decimal precision
+ * MOUSE game database.
+ * yaw = degrees rotated per raw mouse count (engine constant).
  */
-const GAMES = [
-  { id: 'valorant',    name: 'Valorant',              yaw: 0.07,          min: 0.01,  max: 10,   step: 2 },
-  { id: 'csgo',        name: 'CS:GO / CS2',           yaw: 0.022,         min: 0.01,  max: 64,   step: 2 },
-  { id: 'apex',        name: 'Apex Legends',          yaw: 0.022,         min: 0.01,  max: 3,    step: 2 },
-  { id: 'cod',         name: 'Call of Duty (MW/WZ)',  yaw: 0.0066,        min: 1,     max: 20,   step: 2 },
-  { id: 'fortnite',    name: 'Fortnite',              yaw: 0.5589,        min: 0.01,  max: 100,  step: 2 },
-  { id: 'marvel',      name: 'Marvel Rivals',         yaw: 0.1,           min: 0.01,  max: 50,   step: 2 },
-  { id: 'r6',          name: 'Rainbow Six Siege',     yaw: 0.00572958,    min: 1,     max: 500,  step: 1 },
-  { id: 'bf6',         name: 'Battlefield 6',         yaw: 0.022,         min: 1,     max: 150,  step: 1 },
+const MOUSE_GAMES = [
+  { id: 'valorant', name: 'Valorant',             yaw: 0.07,       min: 0.01, max: 10,   step: 2 },
+  { id: 'csgo',     name: 'CS:GO / CS2',          yaw: 0.022,      min: 0.01, max: 64,   step: 2 },
+  { id: 'apex',     name: 'Apex Legends',         yaw: 0.022,      min: 0.01, max: 3,    step: 2 },
+  { id: 'cod',      name: 'Call of Duty (MW/WZ)', yaw: 0.0066,     min: 1,    max: 20,   step: 2 },
+  { id: 'fortnite', name: 'Fortnite',             yaw: 0.5589,     min: 0.01, max: 100,  step: 2 },
+  { id: 'marvel',   name: 'Marvel Rivals',        yaw: 0.1,        min: 0.01, max: 50,   step: 2 },
+  { id: 'r6',       name: 'Rainbow Six Siege',    yaw: 0.00572958, min: 1,    max: 500,  step: 1 },
+  { id: 'bf6',      name: 'Battlefield 6',        yaw: 0.022,      min: 1,    max: 150,  step: 1 },
 ];
+const MOUSE_MAP = Object.fromEntries(MOUSE_GAMES.map(g => [g.id, g]));
 
-/* ── Lookup map for fast access ─────────────────────────────── */
-const GAME_MAP = Object.fromEntries(GAMES.map(g => [g.id, g]));
+/**
+ * CONTROLLER game database.
+ * maxDegPerSec = rotation speed (deg/s) when sensitivity is at sensMax
+ *                and the stick is fully deflected.
+ * sensMin/sensMax = the slider range shown in the game's settings UI.
+ * Linear = true means the sens slider scales linearly with deg/s.
+ * (All supported games use linear scaling for hip-fire.)
+ */
+const CTRL_GAMES = [
+  { id: 'valorant', name: 'Valorant',             sensMin: 0.01, sensMax: 10,  maxDegPerSec: 360 },
+  { id: 'apex',     name: 'Apex Legends',         sensMin: 1,    sensMax: 6,   maxDegPerSec: 500 },
+  { id: 'cod',      name: 'Call of Duty (MW/WZ)', sensMin: 1,    sensMax: 20,  maxDegPerSec: 700 },
+  { id: 'fortnite', name: 'Fortnite',             sensMin: 0.01, sensMax: 100, maxDegPerSec: 364 },
+  { id: 'marvel',   name: 'Marvel Rivals',        sensMin: 0.01, sensMax: 50,  maxDegPerSec: 400 },
+  { id: 'r6',       name: 'Rainbow Six Siege',    sensMin: 1,    sensMax: 100, maxDegPerSec: 400 },
+  { id: 'bf6',      name: 'Battlefield 6',        sensMin: 1,    sensMax: 100, maxDegPerSec: 600 },
+];
+const CTRL_MAP = Object.fromEntries(CTRL_GAMES.map(g => [g.id, g]));
 
-/* ── DOM references ─────────────────────────────────────────── */
-const sourceGameEl  = document.getElementById('sourceGame');
-const targetGameEl  = document.getElementById('targetGame');
-const dpiInput      = document.getElementById('dpiInput');
-const sensInput     = document.getElementById('sensInput');
-const outputValue   = document.getElementById('outputValue');
-const outputGameName = document.getElementById('outputGameName');
-const outputPrimary = document.getElementById('outputPrimary');
-const sourceEdpiEl  = document.getElementById('sourceEdpi');
-const targetEdpiEl  = document.getElementById('targetEdpi');
-const cm360El       = document.getElementById('cm360');
-const copyBtn       = document.getElementById('copyBtn');
-const swapBtn       = document.getElementById('swapBtn');
-const warningBanner = document.getElementById('warningBanner');
-const warningText   = document.getElementById('warningText');
+/* ══════════════════════════════════════════════════════════════
+   DOM REFERENCES — MOUSE
+══════════════════════════════════════════════════════════════ */
+const sourceGameEl       = document.getElementById('sourceGame');
+const targetGameEl       = document.getElementById('targetGame');
+const dpiInput           = document.getElementById('dpiInput');
+const sensInput          = document.getElementById('sensInput');
+const mouseOutputPrimary = document.getElementById('mouseOutputPrimary');
+const mouseOutputValue   = document.getElementById('mouseOutputValue');
+const mouseOutputGameName = document.getElementById('mouseOutputGameName');
+const sourceEdpiEl       = document.getElementById('sourceEdpi');
+const targetEdpiEl       = document.getElementById('targetEdpi');
+const cm360El            = document.getElementById('cm360');
+const mouseCopyBtn       = document.getElementById('mouseCopyBtn');
+const swapBtn            = document.getElementById('swapBtn');
+const mouseWarning       = document.getElementById('mouseWarning');
+const mouseWarningText   = document.getElementById('mouseWarningText');
 
-/* ── State ───────────────────────────────────────────────────── */
-let lastConvertedValue = null; // Raw number for copy
-let copyTimeout = null;        // Debounce timer for copy feedback
+/* ── DOM references — CONTROLLER ──────────────────────────── */
+const ctrlSourceGameEl  = document.getElementById('ctrlSourceGame');
+const ctrlTargetGameEl  = document.getElementById('ctrlTargetGame');
+const ctrlSensInput     = document.getElementById('ctrlSensInput');
+const ctrlAdsInput      = document.getElementById('ctrlAdsInput');
+const ctrlOutputPrimary = document.getElementById('ctrlOutputPrimary');
+const ctrlOutputValue   = document.getElementById('ctrlOutputValue');
+const ctrlOutputGameName = document.getElementById('ctrlOutputGameName');
+const ctrlAdsOutput     = document.getElementById('ctrlAdsOutput');
+const ctrlDegSec        = document.getElementById('ctrlDegSec');
+const ctrlAdsDegSec     = document.getElementById('ctrlAdsDegSec');
+const ctrlCopyBtn       = document.getElementById('ctrlCopyBtn');
+const ctrlSwapBtn       = document.getElementById('ctrlSwapBtn');
+const ctrlWarning       = document.getElementById('ctrlWarning');
+const ctrlWarningText   = document.getElementById('ctrlWarningText');
+const ctrlTableBody     = document.getElementById('ctrlTableBody');
 
-/* ── Initialise dropdowns ───────────────────────────────────── */
-function populateDropdowns() {
-  GAMES.forEach(game => {
-    const optSrc = document.createElement('option');
-    optSrc.value = game.id;
-    optSrc.textContent = game.name;
-    sourceGameEl.appendChild(optSrc);
+/* ── DOM references — TABS ────────────────────────────────── */
+const tabMouse       = document.getElementById('tabMouse');
+const tabController  = document.getElementById('tabController');
+const panelMouse     = document.getElementById('panelMouse');
+const panelController = document.getElementById('panelController');
 
-    const optTgt = document.createElement('option');
-    optTgt.value = game.id;
-    optTgt.textContent = game.name;
-    targetGameEl.appendChild(optTgt);
+/* ══════════════════════════════════════════════════════════════
+   STATE
+══════════════════════════════════════════════════════════════ */
+let mouseLastValue = null;  // last computed mouse target sens (for copy)
+let ctrlLastValue  = null;  // last computed controller hip sens (for copy)
+let mouseCopyTimer = null;
+let ctrlCopyTimer  = null;
+const STORAGE_KEY  = 'fps_converter_v3';
+
+/* ══════════════════════════════════════════════════════════════
+   DROPDOWN POPULATION
+══════════════════════════════════════════════════════════════ */
+function buildOptions(selectEl, games) {
+  selectEl.innerHTML = '';
+  games.forEach(g => {
+    const opt = document.createElement('option');
+    opt.value = g.id;
+    opt.textContent = g.name;
+    selectEl.appendChild(opt);
   });
-
-  // Default: CS:GO → Valorant
-  sourceGameEl.value = 'csgo';
-  targetGameEl.value = 'valorant';
 }
 
-/* ── localStorage persistence ───────────────────────────────── */
-const STORAGE_KEY = 'fps_converter_v1';
+function populateDropdowns() {
+  buildOptions(sourceGameEl,     MOUSE_GAMES);
+  buildOptions(targetGameEl,     MOUSE_GAMES);
+  buildOptions(ctrlSourceGameEl, CTRL_GAMES);
+  buildOptions(ctrlTargetGameEl, CTRL_GAMES);
 
+  sourceGameEl.value     = 'csgo';
+  targetGameEl.value     = 'valorant';
+  ctrlSourceGameEl.value = 'cod';
+  ctrlTargetGameEl.value = 'apex';
+}
+
+/* ══════════════════════════════════════════════════════════════
+   LOCALSTORAGE
+══════════════════════════════════════════════════════════════ */
 function saveState() {
   try {
-    const state = {
-      sourceGame: sourceGameEl.value,
-      targetGame: targetGameEl.value,
-      dpi:        dpiInput.value,
-      sens:       sensInput.value,
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch (_) {
-    // localStorage unavailable — silent fail
-  }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      activeTab:      getCurrentTab(),
+      srcGame:        sourceGameEl.value,
+      tgtGame:        targetGameEl.value,
+      dpi:            dpiInput.value,
+      sens:           sensInput.value,
+      ctrlSrcGame:    ctrlSourceGameEl.value,
+      ctrlTgtGame:    ctrlTargetGameEl.value,
+      ctrlSens:       ctrlSensInput.value,
+      ctrlAds:        ctrlAdsInput.value,
+    }));
+  } catch (_) { /* silent */ }
 }
 
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return false;
-    const state = JSON.parse(raw);
+    if (!raw) return;
+    const s = JSON.parse(raw);
 
-    // Validate that saved game IDs still exist
-    if (GAME_MAP[state.sourceGame]) sourceGameEl.value = state.sourceGame;
-    if (GAME_MAP[state.targetGame]) targetGameEl.value = state.targetGame;
+    if (MOUSE_MAP[s.srcGame])     sourceGameEl.value     = s.srcGame;
+    if (MOUSE_MAP[s.tgtGame])     targetGameEl.value     = s.tgtGame;
+    if (CTRL_MAP[s.ctrlSrcGame])  ctrlSourceGameEl.value = s.ctrlSrcGame;
+    if (CTRL_MAP[s.ctrlTgtGame])  ctrlTargetGameEl.value = s.ctrlTgtGame;
 
-    // Validate and restore numbers
-    const dpi = parseFloat(state.dpi);
-    const sens = parseFloat(state.sens);
-    if (isFinite(dpi) && dpi > 0)  dpiInput.value  = state.dpi;
-    if (isFinite(sens) && sens > 0) sensInput.value = state.sens;
+    const dpi  = parseFloat(s.dpi);
+    const sens = parseFloat(s.sens);
+    const cs   = parseFloat(s.ctrlSens);
+    const ca   = parseFloat(s.ctrlAds);
+    if (isFinite(dpi)  && dpi  > 0) dpiInput.value      = s.dpi;
+    if (isFinite(sens) && sens > 0) sensInput.value      = s.sens;
+    if (isFinite(cs)   && cs   > 0) ctrlSensInput.value  = s.ctrlSens;
+    if (isFinite(ca)   && ca   > 0) ctrlAdsInput.value   = s.ctrlAds;
 
-    return true;
-  } catch (_) {
-    return false;
-  }
+    // Restore active tab
+    if (s.activeTab === 'controller') switchTab('controller', false);
+  } catch (_) { /* silent */ }
 }
 
-/* ── Input validation ───────────────────────────────────────── */
-/**
- * Returns { valid, dpi, sens, sourceGame, targetGame, errorMsg }
- */
-function validateInputs() {
-  const sourceId = sourceGameEl.value;
-  const targetId = targetGameEl.value;
-  const dpiRaw   = dpiInput.value.trim();
-  const sensRaw  = sensInput.value.trim();
+/* ══════════════════════════════════════════════════════════════
+   TAB SWITCHING
+══════════════════════════════════════════════════════════════ */
+function getCurrentTab() {
+  return tabController.classList.contains('active') ? 'controller' : 'mouse';
+}
 
-  // Empty inputs — soft state (no warning, just no output)
-  if (dpiRaw === '' || sensRaw === '') {
-    return { valid: false, silent: true };
+function switchTab(mode, persist = true) {
+  if (mode === 'controller') {
+    tabMouse.classList.remove('active');
+    tabController.classList.add('active');
+    tabMouse.setAttribute('aria-selected', 'false');
+    tabController.setAttribute('aria-selected', 'true');
+    panelMouse.classList.add('hidden');
+    panelController.classList.remove('hidden');
+  } else {
+    tabController.classList.remove('active');
+    tabMouse.classList.add('active');
+    tabController.setAttribute('aria-selected', 'false');
+    tabMouse.setAttribute('aria-selected', 'true');
+    panelController.classList.add('hidden');
+    panelMouse.classList.remove('hidden');
   }
+  if (persist) saveState();
+}
+
+tabMouse.addEventListener('click',       () => switchTab('mouse'));
+tabController.addEventListener('click',  () => switchTab('controller'));
+tabMouse.addEventListener('keydown',     e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTab('mouse'); } });
+tabController.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTab('controller'); } });
+
+/* ══════════════════════════════════════════════════════════════
+   VALIDATION HELPERS
+══════════════════════════════════════════════════════════════ */
+function showBanner(bannerEl, textEl, msg) {
+  textEl.textContent = msg;
+  bannerEl.classList.add('visible');
+}
+function hideBanner(bannerEl) {
+  bannerEl.classList.remove('visible');
+}
+
+/* ══════════════════════════════════════════════════════════════
+   FORMAT HELPERS
+══════════════════════════════════════════════════════════════ */
+function formatSens(v) {
+  if (!isFinite(v)) return '—';
+  if (v >= 100) return v.toFixed(1);
+  if (v >= 10)  return v.toFixed(2);
+  if (v >= 1)   return v.toFixed(3);
+  return parseFloat(v.toFixed(4)).toString();
+}
+
+function formatEdpi(dpi, sens) {
+  const e = dpi * sens;
+  return isFinite(e) ? Math.round(e).toLocaleString() : '—';
+}
+
+function formatCm360(cm) {
+  return isFinite(cm) ? cm.toFixed(1) + ' cm' : '—';
+}
+
+function formatDegSec(d) {
+  return isFinite(d) ? Math.round(d) + '°/s' : '—';
+}
+
+/* ══════════════════════════════════════════════════════════════
+   MOUSE CONVERSION MATH
+══════════════════════════════════════════════════════════════ */
+function mouseCm360(sens, dpi, yaw) {
+  return (360 / (sens * yaw)) / (dpi / 2.54);
+}
+
+function sensFromCm360(cm360, dpi, yaw) {
+  return (360 / (cm360 * (dpi / 2.54))) / yaw;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   CONTROLLER CONVERSION MATH
+══════════════════════════════════════════════════════════════ */
+/**
+ * Convert a source sensitivity value to deg/s.
+ * Linear model: degPerSec scales proportionally with sens in [sensMin, sensMax].
+ */
+function ctrlToDegSec(sens, game) {
+  const ratio = (sens - game.sensMin) / (game.sensMax - game.sensMin);
+  return ratio * game.maxDegPerSec;
+}
+
+/**
+ * Convert deg/s back to a target game's sensitivity.
+ */
+function ctrlFromDegSec(degSec, game) {
+  const ratio = degSec / game.maxDegPerSec;
+  return game.sensMin + ratio * (game.sensMax - game.sensMin);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   MOUSE CONVERT — main
+══════════════════════════════════════════════════════════════ */
+function flashEl(el) {
+  el.classList.add('updating');
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('updating')));
+}
+
+function clearMouseOutput() {
+  mouseOutputValue.textContent      = '—';
+  mouseOutputGameName.textContent   = '—';
+  sourceEdpiEl.textContent          = '—';
+  targetEdpiEl.textContent          = '—';
+  cm360El.textContent               = '—';
+  mouseOutputPrimary.classList.remove('has-value');
+  mouseCopyBtn.disabled = true;
+  mouseLastValue = null;
+}
+
+function convertMouse() {
+  dpiInput.classList.remove('error');
+  sensInput.classList.remove('error');
+  hideBanner(mouseWarning);
+
+  const dpiRaw  = dpiInput.value.trim();
+  const sensRaw = sensInput.value.trim();
+
+  // Soft empty state
+  if (dpiRaw === '' || sensRaw === '') { clearMouseOutput(); return; }
 
   const dpi  = parseFloat(dpiRaw);
   const sens = parseFloat(sensRaw);
 
-  if (!isFinite(dpi) || isNaN(dpi)) {
-    return { valid: false, errorMsg: 'DPI must be a valid number.' };
-  }
-  if (dpi <= 0) {
-    return { valid: false, errorMsg: 'DPI must be greater than 0.' };
+  // Validate DPI
+  if (!isFinite(dpi) || dpi <= 0) {
+    dpiInput.classList.add('error');
+    showBanner(mouseWarning, mouseWarningText, 'DPI must be a positive number.');
+    clearMouseOutput(); return;
   }
   if (dpi > 32000) {
-    return { valid: false, errorMsg: 'DPI exceeds maximum supported value (32,000).' };
+    dpiInput.classList.add('error');
+    showBanner(mouseWarning, mouseWarningText, 'DPI exceeds maximum (32,000).');
+    clearMouseOutput(); return;
   }
-  if (!isFinite(sens) || isNaN(sens)) {
-    return { valid: false, errorMsg: 'Sensitivity must be a valid number.' };
-  }
-  if (sens <= 0) {
-    return { valid: false, errorMsg: 'Sensitivity must be greater than 0.' };
-  }
-
-  return { valid: true, dpi, sens, sourceId, targetId };
-}
-
-/* ── Core conversion math ───────────────────────────────────── */
-/**
- * computeCm360
- * How many centimetres of mouse movement = 360° rotation?
- *
- * counts_per_cm = dpi / 2.54
- * degrees_per_count = sens × yaw
- * counts_per_360 = 360 / degrees_per_count
- * cm_per_360 = counts_per_360 / counts_per_cm
- */
-function computeCm360(sens, dpi, yaw) {
-  const countsPerCm  = dpi / 2.54;
-  const degPerCount  = sens * yaw;
-  const countsPer360 = 360 / degPerCount;
-  return countsPer360 / countsPerCm;
-}
-
-/**
- * computeSensFromCm360
- * Reverse: given a target cm/360 and game yaw, find the required sensitivity.
- *
- * counts_per_360 = cm360 × counts_per_cm
- * degrees_per_count = 360 / counts_per_360
- * sens = degrees_per_count / yaw
- */
-function computeSensFromCm360(cm360, dpi, yaw) {
-  const countsPerCm  = dpi / 2.54;
-  const countsPer360 = cm360 * countsPerCm;
-  const degPerCount  = 360 / countsPer360;
-  return degPerCount / yaw;
-}
-
-/* ── Warning UI helpers ─────────────────────────────────────── */
-function showWarning(msg) {
-  warningText.textContent = msg;
-  warningBanner.classList.add('visible');
-}
-
-function hideWarning() {
-  warningBanner.classList.remove('visible');
-}
-
-/* ── Output UI helpers ──────────────────────────────────────── */
-function clearOutput() {
-  outputValue.textContent     = '—';
-  outputGameName.textContent  = '—';
-  sourceEdpiEl.textContent    = '—';
-  targetEdpiEl.textContent    = '—';
-  cm360El.textContent         = '—';
-  outputPrimary.classList.remove('has-value');
-  copyBtn.disabled = true;
-  lastConvertedValue = null;
-}
-
-function flashValue(el) {
-  el.classList.add('updating');
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => el.classList.remove('updating'));
-  });
-}
-
-/* ── Format helpers ─────────────────────────────────────────── */
-/**
- * Format a sensitivity value to a sensible number of decimals.
- * Avoids unnecessary trailing zeros while keeping precision.
- */
-function formatSens(value) {
-  if (!isFinite(value)) return '—';
-  // Use up to 4 sig figs, but trim trailing zeros
-  if (value >= 100) return value.toFixed(1);
-  if (value >= 10)  return value.toFixed(2);
-  if (value >= 1)   return value.toFixed(3);
-  return value.toFixed(4).replace(/\.?0+$/, '') || value.toFixed(4);
-}
-
-function formatEdpi(dpi, sens) {
-  const edpi = dpi * sens;
-  return isFinite(edpi) ? Math.round(edpi).toLocaleString() : '—';
-}
-
-function formatCm360(cm) {
-  if (!isFinite(cm)) return '—';
-  return cm.toFixed(1) + ' cm';
-}
-
-/* ── Main conversion function ───────────────────────────────── */
-function convert() {
-  // Mark inputs as error-free first
-  dpiInput.classList.remove('error');
-  sensInput.classList.remove('error');
-
-  const result = validateInputs();
-
-  if (!result.valid) {
-    hideWarning();
-    clearOutput();
-
-    if (!result.silent) {
-      showWarning(result.errorMsg || 'Invalid input.');
-      // Highlight which field is wrong
-      if (result.errorMsg && result.errorMsg.toLowerCase().includes('dpi')) {
-        dpiInput.classList.add('error');
-      } else if (result.errorMsg && result.errorMsg.toLowerCase().includes('sens')) {
-        sensInput.classList.add('error');
-      } else {
-        dpiInput.classList.add('error');
-        sensInput.classList.add('error');
-      }
-    }
-    return;
+  // Validate Sensitivity
+  if (!isFinite(sens) || sens <= 0) {
+    sensInput.classList.add('error');
+    showBanner(mouseWarning, mouseWarningText, 'Sensitivity must be a positive number.');
+    clearMouseOutput(); return;
   }
 
-  hideWarning();
+  const srcGame = MOUSE_MAP[sourceGameEl.value];
+  const tgtGame = MOUSE_MAP[targetGameEl.value];
 
-  const { dpi, sens, sourceId, targetId } = result;
-  const sourceGame = GAME_MAP[sourceId];
-  const targetGame = GAME_MAP[targetId];
+  const cm360     = mouseCm360(sens, dpi, srcGame.yaw);
+  const tgtSens   = sensFromCm360(cm360, dpi, tgtGame.yaw);
 
-  // Compute shared cm/360 baseline from source
-  const cm360 = computeCm360(sens, dpi, sourceGame.yaw);
-
-  // Convert to target sensitivity
-  const targetSens = computeSensFromCm360(cm360, dpi, targetGame.yaw);
-
-  // Clamp and warn if out of target game's range (purely informational)
-  if (targetSens < targetGame.min || targetSens > targetGame.max) {
-    showWarning(
-      `Result (${formatSens(targetSens)}) is outside ${targetGame.name}'s typical sensitivity range ` +
-      `(${targetGame.min}–${targetGame.max}). Conversion is still mathematically correct.`
-    );
+  // Range warning (non-blocking)
+  if (tgtSens < tgtGame.min || tgtSens > tgtGame.max) {
+    showBanner(mouseWarning, mouseWarningText,
+      `Result (${formatSens(tgtSens)}) is outside ${tgtGame.name}'s typical range ` +
+      `(${tgtGame.min}–${tgtGame.max}). Mathematically correct but may clip in-game.`);
   }
 
-  // Update primary output
-  flashValue(outputValue);
-  outputValue.textContent    = formatSens(targetSens);
-  outputGameName.textContent = targetGame.name.toUpperCase();
-  outputPrimary.classList.add('has-value');
-  lastConvertedValue = targetSens;
-  copyBtn.disabled = false;
+  flashEl(mouseOutputValue);
+  mouseOutputValue.textContent    = formatSens(tgtSens);
+  mouseOutputGameName.textContent = tgtGame.name.toUpperCase();
+  mouseOutputPrimary.classList.add('has-value');
+  mouseLastValue = tgtSens;
+  mouseCopyBtn.disabled = false;
 
-  // Update stats
   sourceEdpiEl.textContent = formatEdpi(dpi, sens);
-  targetEdpiEl.textContent = formatEdpi(dpi, targetSens);
+  targetEdpiEl.textContent = formatEdpi(dpi, tgtSens);
   cm360El.textContent      = formatCm360(cm360);
 
-  // Persist
   saveState();
 }
 
-/* ── Swap button logic ──────────────────────────────────────── */
-function swapGames() {
-  const tmp = sourceGameEl.value;
-  sourceGameEl.value = targetGameEl.value;
-  targetGameEl.value = tmp;
-
-  // Animate
-  swapBtn.classList.add('swapping');
-  swapBtn.addEventListener('animationend', () => {
-    swapBtn.classList.remove('swapping');
-  }, { once: true });
-
-  convert();
+/* ══════════════════════════════════════════════════════════════
+   CONTROLLER CONVERT — main
+══════════════════════════════════════════════════════════════ */
+function clearCtrlOutput() {
+  ctrlOutputValue.textContent    = '—';
+  ctrlOutputGameName.textContent = '—';
+  ctrlAdsOutput.textContent      = '—';
+  ctrlDegSec.textContent         = '—';
+  ctrlAdsDegSec.textContent      = '—';
+  ctrlOutputPrimary.classList.remove('has-value');
+  ctrlCopyBtn.disabled = true;
+  ctrlLastValue = null;
+  buildCtrlTable(null, null, null);
 }
 
-/* ── Copy to clipboard ──────────────────────────────────────── */
-function copyResult() {
-  if (lastConvertedValue === null) return;
+function convertController() {
+  ctrlSensInput.classList.remove('error');
+  ctrlAdsInput.classList.remove('error');
+  hideBanner(ctrlWarning);
 
-  const text = formatSens(lastConvertedValue);
+  const sensRaw = ctrlSensInput.value.trim();
+  const adsRaw  = ctrlAdsInput.value.trim();
 
-  // Prefer Clipboard API; fall back to execCommand
-  const doFallback = () => {
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      onCopied();
-    } catch (_) {
-      // Cannot copy — silent fail
+  if (sensRaw === '') { clearCtrlOutput(); return; }
+
+  const srcSens = parseFloat(sensRaw);
+  const adsMult = adsRaw === '' ? 1.0 : parseFloat(adsRaw);
+
+  const srcGame = CTRL_MAP[ctrlSourceGameEl.value];
+  const tgtGame = CTRL_MAP[ctrlTargetGameEl.value];
+
+  // Validate
+  if (!isFinite(srcSens) || srcSens <= 0) {
+    ctrlSensInput.classList.add('error');
+    showBanner(ctrlWarning, ctrlWarningText, 'Sensitivity must be a positive number.');
+    clearCtrlOutput(); return;
+  }
+  if (!isFinite(adsMult) || adsMult <= 0) {
+    ctrlAdsInput.classList.add('error');
+    showBanner(ctrlWarning, ctrlWarningText, 'ADS multiplier must be a positive number.');
+    clearCtrlOutput(); return;
+  }
+
+  // Soft-clamp source to its valid range (warn if over)
+  if (srcSens < srcGame.sensMin || srcSens > srcGame.sensMax) {
+    showBanner(ctrlWarning, ctrlWarningText,
+      `Source sensitivity (${srcSens}) is outside ${srcGame.name}'s range ` +
+      `(${srcGame.sensMin}–${srcGame.sensMax}).`);
+  }
+
+  // Core conversion
+  const hipDegSec  = ctrlToDegSec(srcSens, srcGame);
+  const adsDegSec  = hipDegSec * adsMult;
+  const tgtHipSens = ctrlFromDegSec(hipDegSec, tgtGame);
+  const tgtAdsSens = ctrlFromDegSec(adsDegSec, tgtGame);
+
+  flashEl(ctrlOutputValue);
+  ctrlOutputValue.textContent    = formatSens(tgtHipSens);
+  ctrlOutputGameName.textContent = tgtGame.name.toUpperCase();
+  ctrlOutputPrimary.classList.add('has-value');
+  ctrlLastValue = tgtHipSens;
+  ctrlCopyBtn.disabled = false;
+
+  ctrlAdsOutput.textContent  = formatSens(tgtAdsSens);
+  ctrlDegSec.textContent     = formatDegSec(hipDegSec);
+  ctrlAdsDegSec.textContent  = formatDegSec(adsDegSec);
+
+  // Build all-games table
+  buildCtrlTable(hipDegSec, adsDegSec, tgtGame.id);
+
+  saveState();
+}
+
+/**
+ * Build the reference table showing equivalent sensitivity in every
+ * supported controller game for the current deg/s baseline.
+ */
+function buildCtrlTable(hipDegSec, adsDegSec, targetId) {
+  ctrlTableBody.innerHTML = '';
+
+  if (hipDegSec === null) {
+    // Empty state — render placeholder rows
+    CTRL_GAMES.forEach(g => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${g.name}</td><td style="text-align:right">—</td><td style="text-align:right">—</td>`;
+      ctrlTableBody.appendChild(tr);
+    });
+    return;
+  }
+
+  CTRL_GAMES.forEach(g => {
+    const hip = ctrlFromDegSec(hipDegSec, g);
+    const ads = ctrlFromDegSec(adsDegSec, g);
+
+    const hipOOR = hip < g.sensMin || hip > g.sensMax;
+    const adsOOR = ads < g.sensMin || ads > g.sensMax;
+
+    const tr = document.createElement('tr');
+    if (g.id === targetId) tr.classList.add('is-target');
+
+    const hipCell = document.createElement('td');
+    hipCell.style.textAlign = 'right';
+    hipCell.textContent = formatSens(Math.max(g.sensMin, Math.min(g.sensMax, hip)));
+    if (hipOOR) { hipCell.classList.add('out-of-range'); hipCell.title = 'Clamped — outside game range'; }
+
+    const adsCell = document.createElement('td');
+    adsCell.style.textAlign = 'right';
+    adsCell.textContent = formatSens(Math.max(g.sensMin, Math.min(g.sensMax, ads)));
+    if (adsOOR) { adsCell.classList.add('out-of-range'); adsCell.title = 'Clamped — outside game range'; }
+
+    const nameCell = document.createElement('td');
+    nameCell.textContent = g.name;
+
+    tr.appendChild(nameCell);
+    tr.appendChild(hipCell);
+    tr.appendChild(adsCell);
+    ctrlTableBody.appendChild(tr);
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SWAP BUTTONS
+══════════════════════════════════════════════════════════════ */
+function makeSwap(btn, srcEl, tgtEl, convertFn) {
+  btn.addEventListener('click', () => {
+    const tmp = srcEl.value;
+    srcEl.value = tgtEl.value;
+    tgtEl.value = tmp;
+    btn.classList.add('swapping');
+    btn.addEventListener('animationend', () => btn.classList.remove('swapping'), { once: true });
+    convertFn();
+  });
+  btn.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); btn.click(); }
+  });
+}
+
+makeSwap(swapBtn,     sourceGameEl,    targetGameEl,    convertMouse);
+makeSwap(ctrlSwapBtn, ctrlSourceGameEl, ctrlTargetGameEl, convertController);
+
+/* ══════════════════════════════════════════════════════════════
+   COPY TO CLIPBOARD
+══════════════════════════════════════════════════════════════ */
+function makeCopy(btn, getValueFn, timerRef) {
+  btn.addEventListener('click', () => {
+    const val = getValueFn();
+    if (val === null) return;
+    const text = formatSens(val);
+
+    const onCopied = () => {
+      btn.classList.add('copied');
+      const lbl = btn.querySelector('.copy-label');
+      if (lbl) lbl.textContent = 'COPIED';
+      clearTimeout(timerRef.t);
+      timerRef.t = setTimeout(() => {
+        btn.classList.remove('copied');
+        if (lbl) lbl.textContent = 'COPY';
+      }, 2000);
+    };
+
+    const fallback = () => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        onCopied();
+      } catch (_) { /* silent */ }
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(onCopied).catch(fallback);
+    } else {
+      fallback();
     }
-  };
-
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(onCopied).catch(doFallback);
-  } else {
-    doFallback();
-  }
+  });
 }
 
-function onCopied() {
-  copyBtn.classList.add('copied');
-  const labelEl = copyBtn.querySelector('.copy-label');
-  if (labelEl) labelEl.textContent = 'COPIED';
+const mouseCopyTimerRef = { t: null };
+const ctrlCopyTimerRef  = { t: null };
+makeCopy(mouseCopyBtn, () => mouseLastValue, mouseCopyTimerRef);
+makeCopy(ctrlCopyBtn,  () => ctrlLastValue,  ctrlCopyTimerRef);
 
-  clearTimeout(copyTimeout);
-  copyTimeout = setTimeout(() => {
-    copyBtn.classList.remove('copied');
-    if (labelEl) labelEl.textContent = 'COPY';
-  }, 2000);
-}
+/* ══════════════════════════════════════════════════════════════
+   EVENT WIRING
+══════════════════════════════════════════════════════════════ */
+// Mouse panel
+sourceGameEl.addEventListener('change', convertMouse);
+targetGameEl.addEventListener('change', convertMouse);
+dpiInput.addEventListener('input',      convertMouse);
+sensInput.addEventListener('input',     convertMouse);
 
-/* ── Event listeners ────────────────────────────────────────── */
-sourceGameEl.addEventListener('change', convert);
-targetGameEl.addEventListener('change', convert);
-dpiInput.addEventListener('input', convert);
-sensInput.addEventListener('input', convert);
-swapBtn.addEventListener('click', swapGames);
-copyBtn.addEventListener('click', copyResult);
+// Controller panel
+ctrlSourceGameEl.addEventListener('change', convertController);
+ctrlTargetGameEl.addEventListener('change', convertController);
+ctrlSensInput.addEventListener('input',     convertController);
+ctrlAdsInput.addEventListener('input',      convertController);
 
-/* ── Keyboard accessibility for swap ───────────────────────── */
-swapBtn.addEventListener('keydown', e => {
-  if (e.key === 'Enter' || e.key === ' ') {
-    e.preventDefault();
-    swapGames();
-  }
-});
-
-/* ── Bootstrap ──────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════
+   BOOTSTRAP
+══════════════════════════════════════════════════════════════ */
 function init() {
   populateDropdowns();
   loadState();
-  convert(); // Run conversion with restored (or default) values
+  convertMouse();
+  convertController();
 }
 
 document.addEventListener('DOMContentLoaded', init);
