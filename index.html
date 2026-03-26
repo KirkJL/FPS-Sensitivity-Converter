@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FPS Sensitivity Converter</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+  <!-- Scanline overlay for CRT effect -->
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <!-- Crosshair background decoration -->
+  <div class="bg-reticle" aria-hidden="true">
+    <div class="reticle-h"></div>
+    <div class="reticle-v"></div>
+    <div class="reticle-circle"></div>
+    <div class="reticle-dot"></div>
+  </div>
+
+  <main class="container">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-badge">v2.1</div>
+      <h1 class="title">
+        <span class="title-prefix">SEN</span>CONVERT
+      </h1>
+      <p class="subtitle">FPS Sensitivity Conversion Tool</p>
+    </header>
+
+    <!-- Main card -->
+    <div class="card">
+
+      <!-- Warning banner (hidden by default) -->
+      <div class="warning-banner" id="warningBanner" role="alert" aria-live="polite">
+        <span class="warning-icon">⚠</span>
+        <span id="warningText">Invalid input detected.</span>
+      </div>
+
+      <!-- Input section -->
+      <section class="section" aria-label="Input configuration">
+        <div class="section-label">INPUT CONFIG</div>
+
+        <div class="input-grid">
+
+          <!-- Source game -->
+          <div class="field">
+            <label class="field-label" for="sourceGame">SOURCE GAME</label>
+            <div class="select-wrapper">
+              <select class="select" id="sourceGame" autocomplete="off">
+                <!-- Populated by JS -->
+              </select>
+              <span class="select-arrow" aria-hidden="true">▼</span>
+            </div>
+          </div>
+
+          <!-- Swap button -->
+          <div class="swap-col">
+            <button class="btn-swap" id="swapBtn" aria-label="Swap source and target games" title="Swap games">
+              <span class="swap-icon" aria-hidden="true">⇄</span>
+            </button>
+          </div>
+
+          <!-- Target game -->
+          <div class="field">
+            <label class="field-label" for="targetGame">TARGET GAME</label>
+            <div class="select-wrapper">
+              <select class="select" id="targetGame" autocomplete="off">
+                <!-- Populated by JS -->
+              </select>
+              <span class="select-arrow" aria-hidden="true">▼</span>
+            </div>
+          </div>
+
+          <!-- DPI -->
+          <div class="field field--half">
+            <label class="field-label" for="dpiInput">MOUSE DPI</label>
+            <input
+              class="input"
+              type="number"
+              id="dpiInput"
+              placeholder="800"
+              min="100"
+              max="32000"
+              step="1"
+              autocomplete="off"
+              inputmode="numeric"
+            />
+          </div>
+
+          <!-- Sensitivity -->
+          <div class="field field--half">
+            <label class="field-label" for="sensInput">SENSITIVITY</label>
+            <input
+              class="input"
+              type="number"
+              id="sensInput"
+              placeholder="1.00"
+              min="0.001"
+              max="100"
+              step="any"
+              autocomplete="off"
+              inputmode="decimal"
+            />
+          </div>
+
+        </div>
+      </section>
+
+      <!-- Divider -->
+      <div class="divider" aria-hidden="true">
+        <span class="divider-line"></span>
+        <span class="divider-icon">◈</span>
+        <span class="divider-line"></span>
+      </div>
+
+      <!-- Output section -->
+      <section class="section output-section" aria-label="Conversion output">
+        <div class="section-label">OUTPUT DATA</div>
+
+        <!-- Converted sensitivity — primary output -->
+        <div class="output-primary" id="outputPrimary" aria-live="polite">
+          <div class="output-game-name" id="outputGameName">—</div>
+          <div class="output-value-row">
+            <span class="output-value" id="outputValue">—</span>
+            <button class="btn-copy" id="copyBtn" aria-label="Copy converted sensitivity to clipboard" title="Copy value" disabled>
+              <span class="copy-icon" aria-hidden="true">⧉</span>
+              <span class="copy-label">COPY</span>
+            </button>
+          </div>
+          <div class="output-unit">in-game sensitivity</div>
+        </div>
+
+        <!-- Secondary stats -->
+        <div class="stats-row">
+          <div class="stat-block">
+            <div class="stat-label">SOURCE eDPI</div>
+            <div class="stat-value" id="sourceEdpi">—</div>
+          </div>
+          <div class="stat-block">
+            <div class="stat-label">TARGET eDPI</div>
+            <div class="stat-value" id="targetEdpi">—</div>
+          </div>
+          <div class="stat-block">
+            <div class="stat-label">CM / 360°</div>
+            <div class="stat-value" id="cm360">—</div>
+          </div>
+        </div>
+
+      </section>
+
+    </div><!-- /card -->
+
+    <!-- Footer -->
+    <footer class="footer">
+      <p>Conversions use cm/360° as universal baseline &nbsp;·&nbsp; All calculations client-side</p>
+    </footer>
+
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
